@@ -549,18 +549,18 @@ def build_dashboard_html() -> str:
   <title>FTP Watcher Dashboard</title>
   <style>
     :root {
-      --bg: #09131a;
-      --panel: rgba(10, 24, 33, 0.82);
-      --panel-strong: rgba(13, 33, 44, 0.95);
-      --border: rgba(157, 201, 184, 0.16);
-      --text: #ecf7f2;
-      --muted: #90a9a5;
-      --accent: #36d6a0;
-      --accent-2: #7be0ff;
-      --warn: #f8c05c;
-      --danger: #ff7c70;
-      --idle: #7aa5ff;
-      --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      --bg: #f4eee5;
+      --panel: rgba(255, 251, 246, 0.92);
+      --panel-strong: #faf6f0;
+      --border: rgba(83, 97, 96, 0.12);
+      --text: #193033;
+      --muted: #738583;
+      --accent: #1e9a75;
+      --accent-2: #2b7c99;
+      --warn: #d69a31;
+      --danger: #ca6458;
+      --idle: #6887d8;
+      --shadow: 0 20px 48px rgba(73, 56, 40, 0.12);
     }
 
     * { box-sizing: border-box; }
@@ -570,9 +570,9 @@ def build_dashboard_html() -> str:
       font-family: "Avenir Next", "Segoe UI", sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top left, rgba(54, 214, 160, 0.18), transparent 28%),
-        radial-gradient(circle at top right, rgba(123, 224, 255, 0.15), transparent 24%),
-        linear-gradient(180deg, #0a141b 0%, #081017 100%);
+        radial-gradient(circle at top left, rgba(30, 154, 117, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(43, 124, 153, 0.10), transparent 24%),
+        linear-gradient(180deg, #fbf7f1 0%, #f1e8dc 100%);
     }
     .shell {
       width: min(1280px, calc(100vw - 32px));
@@ -616,7 +616,7 @@ def build_dashboard_html() -> str:
       gap: 10px;
       padding: 12px 16px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.04);
+      background: rgba(255, 255, 255, 0.72);
       border: 1px solid var(--border);
       font-weight: 700;
       text-transform: uppercase;
@@ -630,18 +630,29 @@ def build_dashboard_html() -> str:
       background: var(--accent);
       box-shadow: 0 0 18px currentColor;
     }
-    .hero-grid, .stats-grid, .lower-grid {
+    .stats-grid {
       display: grid;
       gap: 16px;
     }
-    .hero-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
     .stats-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
-    .lower-grid { grid-template-columns: 1.25fr 0.75fr; }
     .mini {
       padding: 18px 18px 16px;
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.62);
+      border: 1px solid rgba(83, 97, 96, 0.08);
       border-radius: 20px;
+    }
+    .hero-side {
+      display: grid;
+      justify-items: end;
+      gap: 8px;
+    }
+    .hero-meta {
+      display: grid;
+      gap: 2px;
+      text-align: right;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.35;
     }
     .label {
       color: var(--muted);
@@ -688,10 +699,10 @@ def build_dashboard_html() -> str:
     .bar {
       width: 100%;
       height: 18px;
-      background: rgba(255, 255, 255, 0.06);
+      background: rgba(25, 48, 51, 0.08);
       border-radius: 999px;
       overflow: hidden;
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(83, 97, 96, 0.08);
     }
     .bar-fill {
       height: 100%;
@@ -710,8 +721,8 @@ def build_dashboard_html() -> str:
     .clip-card {
       padding: 14px 16px;
       border-radius: 16px;
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid rgba(83, 97, 96, 0.08);
     }
     .clip-head {
       display: flex;
@@ -737,8 +748,8 @@ def build_dashboard_html() -> str:
     .clip-cell {
       padding: 10px 12px;
       border-radius: 12px;
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.05);
+      background: rgba(255, 249, 244, 0.96);
+      border: 1px solid rgba(83, 97, 96, 0.07);
     }
     .clip-cell .k {
       display: block;
@@ -788,8 +799,8 @@ def build_dashboard_html() -> str:
     .pill {
       padding: 10px 12px;
       border-radius: 14px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(83, 97, 96, 0.08);
       color: var(--muted);
       font-size: 0.88rem;
     }
@@ -811,8 +822,8 @@ def build_dashboard_html() -> str:
     }
     .player-shell {
       width: min(1200px, 100%);
-      background: rgba(10, 24, 33, 0.96);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 252, 248, 0.98);
+      border: 1px solid rgba(83, 97, 96, 0.08);
       border-radius: 24px;
       box-shadow: var(--shadow);
       overflow: hidden;
@@ -823,7 +834,7 @@ def build_dashboard_html() -> str:
       justify-content: space-between;
       gap: 16px;
       padding: 16px 18px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      border-bottom: 1px solid rgba(83, 97, 96, 0.08);
     }
     .player-title {
       font-size: 1rem;
@@ -833,7 +844,7 @@ def build_dashboard_html() -> str:
     .close-button {
       appearance: none;
       border: 0;
-      background: rgba(255,255,255,0.07);
+      background: rgba(25, 48, 51, 0.08);
       color: var(--text);
       border-radius: 999px;
       padding: 10px 14px;
@@ -845,10 +856,15 @@ def build_dashboard_html() -> str:
       width: 100%;
       height: min(72vh, 780px);
       border: 0;
-      background: #03080b;
+      background: #f1ebe2;
     }
-    @media (max-width: 980px) {
-      .lower-grid { grid-template-columns: 1fr; }
+    @media (max-width: 760px) {
+      .hero-side {
+        justify-items: start;
+      }
+      .hero-meta {
+        text-align: left;
+      }
     }
   </style>
 </head>
@@ -860,15 +876,15 @@ def build_dashboard_html() -> str:
           <h1>FTP Watcher</h1>
           <div class="sub">Live operational dashboard for connection status, polling cadence, current transfers, and session history.</div>
         </div>
-        <div class="badge"><span class="dot" id="state-dot"></span><span id="state-badge">Starting</span></div>
+        <div class="hero-side">
+          <div class="badge"><span class="dot" id="state-dot"></span><span id="state-badge">Starting</span></div>
+          <div class="hero-meta">
+            <span id="last-poll-inline">Last poll: -</span>
+            <span id="next-poll-inline">Next poll: -</span>
+          </div>
+        </div>
       </div>
       <div class="status-line" id="status-line">Loading dashboard…</div>
-      <div class="hero-grid">
-        <div class="mini"><div class="label">Remote</div><div class="value" id="remote-dir">-</div></div>
-        <div class="mini"><div class="label">Download Folder</div><div class="value" id="download-dir">-</div></div>
-        <div class="mini"><div class="label">Last Poll</div><div class="value" id="last-poll">-</div></div>
-        <div class="mini"><div class="label">Next Poll</div><div class="value" id="next-poll">-</div></div>
-      </div>
     </section>
 
     <section class="card">
@@ -883,36 +899,21 @@ def build_dashboard_html() -> str:
       </div>
     </section>
 
-    <section class="lower-grid">
-      <section class="card">
-        <h2>Current Transfer</h2>
-        <div class="progress-wrap">
-          <div class="value" id="current-file">No active transfer</div>
-          <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
-          <div class="progress-meta">
-            <span id="progress-left">Waiting for work</span>
-            <span id="progress-right">-</span>
-          </div>
-          <div class="pill-row">
-            <div class="pill"><strong>Last Success:</strong> <span id="last-success">-</span></div>
-            <div class="pill"><strong>Last File:</strong> <span id="last-file">-</span></div>
-            <div class="pill"><strong>Last Error:</strong> <span id="last-error">-</span></div>
-          </div>
+    <section class="card">
+      <h2>Current Transfer</h2>
+      <div class="progress-wrap">
+        <div class="value" id="current-file">No active transfer</div>
+        <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+        <div class="progress-meta">
+          <span id="progress-left">Waiting for work</span>
+          <span id="progress-right">-</span>
         </div>
-      </section>
-
-      <section class="card">
-        <h2>Configuration</h2>
         <div class="pill-row">
-          <div class="pill"><strong>Host:</strong> <span id="ftp-host">-</span></div>
-          <div class="pill"><strong>FTP Port:</strong> <span id="ftp-port">-</span></div>
-          <div class="pill"><strong>TLS:</strong> <span id="ftp-tls">-</span></div>
-          <div class="pill"><strong>Passive:</strong> <span id="ftp-passive">-</span></div>
-          <div class="pill"><strong>Poll Interval:</strong> <span id="poll-interval">-</span></div>
-          <div class="pill"><strong>Cleanup:</strong> <span id="cleanup-mode">-</span></div>
-          <div class="pill"><strong>UI Mode:</strong> <span id="ui-mode">-</span></div>
+          <div class="pill"><strong>Last Success:</strong> <span id="last-success">-</span></div>
+          <div class="pill"><strong>Last File:</strong> <span id="last-file">-</span></div>
+          <div class="pill"><strong>Last Error:</strong> <span id="last-error">-</span></div>
         </div>
-      </section>
+      </div>
     </section>
 
     <section class="card">
@@ -1043,10 +1044,8 @@ def build_dashboard_html() -> str:
       byId("state-dot").style.background = stateColor(state);
       setText("state-badge", state);
       setText("status-line", runtime.status_message || "-");
-      setText("remote-dir", config.remote_dir);
-      setText("download-dir", config.download_dir);
-      setText("last-poll", formatClock(runtime.last_poll_at));
-      setText("next-poll", runtime.next_check_at ? formatDuration(runtime.next_check_at - now) : "-");
+      setText("last-poll-inline", `Last poll: ${formatClock(runtime.last_poll_at)}`);
+      setText("next-poll-inline", `Next poll: ${runtime.next_check_at ? formatDuration(runtime.next_check_at - now) : "-"}`);
       setText("files-downloaded", runtime.files_downloaded);
       setText("bytes-downloaded", formatBytes(runtime.bytes_downloaded));
       setText("failures", runtime.failures);
@@ -1061,13 +1060,6 @@ def build_dashboard_html() -> str:
       lastFileEl.style.textDecoration = isPlayableMp4(runtime.last_download_name) ? "underline" : "none";
       lastFileEl.onclick = isPlayableMp4(runtime.last_download_name) ? () => openPlayer(runtime.last_download_name) : null;
       setText("last-error", runtime.last_error || "-");
-      setText("ftp-host", config.ftp_host);
-      setText("ftp-port", config.ftp_port);
-      setText("ftp-tls", config.use_tls ? "enabled" : "off");
-      setText("ftp-passive", config.passive ? "yes" : "no");
-      setText("poll-interval", `${config.poll_interval_seconds}s`);
-      setText("cleanup-mode", config.delete_remote_after_download ? "delete remote" : "keep remote");
-      setText("ui-mode", config.ui_mode);
 
       const current = runtime.current_download;
       if (current) {
