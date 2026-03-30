@@ -179,11 +179,7 @@ def format_bytes(num_bytes: float) -> str:
 def format_duration(seconds: float) -> str:
     total_seconds = max(0, int(seconds))
     minutes, secs = divmod(total_seconds, 60)
-    hours, mins = divmod(minutes, 60)
-
-    if hours:
-        return f"{hours:d}:{mins:02d}:{secs:02d}"
-    return f"{mins:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
 
 
 def shorten_text(text: str, max_width: int) -> str:
@@ -223,14 +219,10 @@ class ProgressTracker:
 
         elapsed = max(now - self.start_time, 0.001)
         speed = self.downloaded / elapsed
-        width = max(80, self.ui.terminal_width())
-        name_width = min(30, max(18, width // 4))
-        size_width = 18
-        speed_width = 14
-        eta_width = 10
-        percent_width = 8
-        fixed_width = name_width + size_width + speed_width + eta_width + percent_width + 14
-        bar_width = max(10, width - fixed_width)
+        width = max(72, self.ui.terminal_width())
+        name_width = min(24, max(18, width // 5))
+        fixed_width = name_width + 39
+        bar_width = max(12, width - fixed_width)
         label = shorten_text(self.filename, name_width).ljust(name_width)
 
         if self.total_size > 0:
@@ -245,19 +237,19 @@ class ProgressTracker:
                 f"\r{self.ui.style(label, self.ui.BOLD)} "
                 f"[{self.ui.style(bar, self.ui.CYAN)}] "
                 f"{percent * 100:6.2f}% "
-                f"{format_bytes(self.downloaded).rjust(8)}/{format_bytes(self.total_size).ljust(8)} "
-                f"{format_bytes(speed).rjust(8)}/s "
-                f"ETA {format_duration(eta_seconds).rjust(5)}"
+                f"{format_bytes(self.downloaded)}/{format_bytes(self.total_size)} "
+                f"{format_bytes(speed)}/s "
+                f"ETA {format_duration(eta_seconds)}"
             )
         else:
             line = (
                 f"\r{self.ui.style(label, self.ui.BOLD)} "
-                f"{format_bytes(self.downloaded).rjust(8)} "
-                f"{format_bytes(speed).rjust(8)}/s "
+                f"{format_bytes(self.downloaded)} "
+                f"{format_bytes(speed)}/s "
                 f"{self.ui.style('(size unavailable)', self.ui.DIM)}"
             )
 
-        line = line[:width]
+        line = shorten_text(line, width)
         sys.stdout.write(line)
         sys.stdout.flush()
 
