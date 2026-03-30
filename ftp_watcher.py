@@ -3,6 +3,7 @@ import configparser
 import ftplib
 import json
 import logging
+import mimetypes
 import os
 import shutil
 import sys
@@ -12,6 +13,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 def is_interactive() -> bool:
@@ -309,12 +311,19 @@ class DashboardState:
     def clear_current_download(self) -> None:
         self.update_runtime(current_download=None)
 
-    def add_event(self, level: str, title: str, detail: str) -> None:
+    def add_event(
+        self,
+        level: str,
+        title: str,
+        detail: str,
+        filename: Optional[str] = None,
+    ) -> None:
         event = {
             "time": time.time(),
             "level": level,
             "title": title,
             "detail": detail,
+            "filename": filename,
         }
         with self.lock:
             events = [event, *self.runtime["recent_events"]]
@@ -522,6 +531,23 @@ def build_dashboard_html() -> str:
       line-height: 1.45;
       word-break: break-word;
     }
+    .event-action {
+      margin-top: 10px;
+    }
+    .link-button {
+      appearance: none;
+      border: 0;
+      cursor: pointer;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(54, 214, 160, 0.12);
+      color: var(--text);
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .link-button:hover {
+      background: rgba(54, 214, 160, 0.2);
+    }
     .muted {
       color: var(--muted);
     }
@@ -540,6 +566,57 @@ def build_dashboard_html() -> str:
     }
     .pill strong {
       color: var(--text);
+    }
+    .player-modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(12px);
+      padding: 18px;
+      z-index: 30;
+    }
+    .player-modal.open {
+      display: grid;
+    }
+    .player-shell {
+      width: min(1200px, 100%);
+      background: rgba(10, 24, 33, 0.96);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .player-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .player-title {
+      font-size: 1rem;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .close-button {
+      appearance: none;
+      border: 0;
+      background: rgba(255,255,255,0.07);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    .player-frame {
+      display: block;
+      width: 100%;
+      height: min(72vh, 780px);
+      border: 0;
+      background: #03080b;
     }
     @media (max-width: 980px) {
       .lower-grid { grid-template-columns: 1fr; }
@@ -615,6 +692,16 @@ def build_dashboard_html() -> str:
     </section>
   </div>
 
+  <div class="player-modal" id="player-modal">
+    <div class="player-shell">
+      <div class="player-head">
+        <div class="player-title" id="player-title">Clip preview</div>
+        <button class="close-button" id="close-player" type="button">Close</button>
+      </div>
+      <iframe class="player-frame" id="player-frame" allow="autoplay; fullscreen"></iframe>
+    </div>
+  </div>
+
   <script>
     const byId = (id) => document.getElementById(id);
 
@@ -661,6 +748,22 @@ def build_dashboard_html() -> str:
       byId(id).textContent = value ?? "-";
     }
 
+    function isPlayableMp4(filename) {
+      return !!filename && filename.toLowerCase().endsWith(".mp4");
+    }
+
+    function openPlayer(filename) {
+      if (!isPlayableMp4(filename)) return;
+      byId("player-title").textContent = filename;
+      byId("player-frame").src = `/player?file=${encodeURIComponent(filename)}`;
+      byId("player-modal").classList.add("open");
+    }
+
+    function closePlayer() {
+      byId("player-modal").classList.remove("open");
+      byId("player-frame").src = "about:blank";
+    }
+
     function renderEvents(events) {
       const host = byId("event-list");
       host.innerHTML = "";
@@ -671,13 +774,21 @@ def build_dashboard_html() -> str:
       events.forEach((event) => {
         const el = document.createElement("div");
         el.className = "event";
+        const action = isPlayableMp4(event.filename)
+          ? `<div class="event-action"><button class="link-button" data-file="${event.filename}">Play clip</button></div>`
+          : "";
         el.innerHTML = `
           <div class="event-head">
             <span class="event-title">${event.title}</span>
             <span class="muted">${formatClock(event.time)}</span>
           </div>
           <div class="event-detail">${event.detail}</div>
+          ${action}
         `;
+        const button = el.querySelector("[data-file]");
+        if (button) {
+          button.addEventListener("click", () => openPlayer(button.dataset.file));
+        }
         host.appendChild(el);
       });
     }
@@ -702,7 +813,12 @@ def build_dashboard_html() -> str:
       setText("uptime", formatDuration(now - data.started_at));
       setText("idle-for", runtime.idle_since ? formatDuration(now - runtime.idle_since) : "-");
       setText("last-success", formatClock(runtime.last_success_at));
-      setText("last-file", runtime.last_download_name || "-");
+      const lastFile = runtime.last_download_name || "-";
+      const lastFileEl = byId("last-file");
+      lastFileEl.textContent = lastFile;
+      lastFileEl.style.cursor = isPlayableMp4(runtime.last_download_name) ? "pointer" : "default";
+      lastFileEl.style.textDecoration = isPlayableMp4(runtime.last_download_name) ? "underline" : "none";
+      lastFileEl.onclick = isPlayableMp4(runtime.last_download_name) ? () => openPlayer(runtime.last_download_name) : null;
       setText("last-error", runtime.last_error || "-");
       setText("ftp-host", config.ftp_host);
       setText("ftp-port", config.ftp_port);
@@ -728,6 +844,14 @@ def build_dashboard_html() -> str:
       renderEvents(runtime.recent_events || []);
     }
 
+    byId("close-player").addEventListener("click", closePlayer);
+    byId("player-modal").addEventListener("click", (event) => {
+      if (event.target === byId("player-modal")) closePlayer();
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closePlayer();
+    });
+
     async function refresh() {
       try {
         const response = await fetch("/api/status", { cache: "no-store" });
@@ -745,12 +869,115 @@ def build_dashboard_html() -> str:
 </html>"""
 
 
-def start_web_server(host: str, port: int, dashboard_state: DashboardState) -> ThreadingHTTPServer:
+def start_web_server(
+    host: str,
+    port: int,
+    dashboard_state: DashboardState,
+    download_dir: Path,
+) -> ThreadingHTTPServer:
     dashboard_html = build_dashboard_html().encode("utf-8")
+    download_root = download_dir.resolve()
+
+    def resolve_media_path(raw_filename: str) -> Optional[Path]:
+        candidate = (download_root / raw_filename).resolve()
+        if download_root == candidate or download_root not in candidate.parents:
+            return None
+        if not candidate.is_file():
+            return None
+        return candidate
+
+    def serve_file(handler: BaseHTTPRequestHandler, path: Path) -> None:
+        file_size = path.stat().st_size
+        content_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        range_header = handler.headers.get("Range")
+
+        start = 0
+        end = file_size - 1
+        status = 200
+
+        if range_header and range_header.startswith("bytes="):
+            range_spec = range_header.split("=", 1)[1]
+            start_text, _, end_text = range_spec.partition("-")
+            if start_text:
+                start = int(start_text)
+            if end_text:
+                end = int(end_text)
+            end = min(end, file_size - 1)
+            status = 206
+
+        length = max(0, end - start + 1)
+        handler.send_response(status)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Accept-Ranges", "bytes")
+        handler.send_header("Content-Length", str(length))
+        if status == 206:
+            handler.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+        handler.end_headers()
+
+        with path.open("rb") as fh:
+            fh.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = fh.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+                remaining -= len(chunk)
+
+    def build_player_html(filename: str) -> bytes:
+        safe_filename = filename.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        media_url = f"/media/{quote(filename)}"
+        return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{safe_filename}</title>
+  <style>
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, rgba(65, 203, 177, 0.2), transparent 30%), #081017;
+      color: #eef8f4;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+    }}
+    .frame {{
+      width: min(1100px, calc(100vw - 24px));
+      background: rgba(10, 24, 33, 0.92);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 24px;
+      padding: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    }}
+    h1 {{
+      margin: 0 0 12px;
+      font-size: 1.2rem;
+      letter-spacing: -0.02em;
+      word-break: break-word;
+    }}
+    video {{
+      width: 100%;
+      max-height: 78vh;
+      border-radius: 18px;
+      background: #000;
+    }}
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <h1>{safe_filename}</h1>
+    <video controls autoplay playsinline src="{media_url}"></video>
+  </div>
+</body>
+</html>""".encode("utf-8")
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            if self.path in {"/", "/index.html"}:
+            parsed = urlparse(self.path)
+
+            if parsed.path in {"/", "/index.html"}:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(dashboard_html)))
@@ -758,7 +985,7 @@ def start_web_server(host: str, port: int, dashboard_state: DashboardState) -> T
                 self.wfile.write(dashboard_html)
                 return
 
-            if self.path == "/api/status":
+            if parsed.path == "/api/status":
                 payload = json.dumps(dashboard_state.snapshot()).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -766,6 +993,29 @@ def start_web_server(host: str, port: int, dashboard_state: DashboardState) -> T
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
+                return
+
+            if parsed.path == "/player":
+                filename = parse_qs(parsed.query).get("file", [""])[0]
+                media_path = resolve_media_path(unquote(filename))
+                if media_path is None:
+                    self.send_error(404, "Media not found")
+                    return
+                player_html = build_player_html(media_path.name)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(player_html)))
+                self.end_headers()
+                self.wfile.write(player_html)
+                return
+
+            if parsed.path.startswith("/media/"):
+                filename = unquote(parsed.path[len("/media/"):])
+                media_path = resolve_media_path(filename)
+                if media_path is None:
+                    self.send_error(404, "Media not found")
+                    return
+                serve_file(self, media_path)
                 return
 
             self.send_error(404, "Not Found")
@@ -1033,7 +1283,7 @@ def main() -> int:
     web_server: Optional[ThreadingHTTPServer] = None
     if web_enabled:
         try:
-            web_server = start_web_server(web_host, web_port, dashboard)
+            web_server = start_web_server(web_host, web_port, dashboard, download_dir)
             dashboard.add_event("info", "Dashboard online", f"http://{web_host}:{web_port}")
         except OSError as exc:
             web_enabled = False
@@ -1135,7 +1385,7 @@ def main() -> int:
 
                     ui.clear_status_line()
                     logging.info("Detected | %s | %s", filename, format_bytes(size))
-                    dashboard.add_event("info", "Detected", f"{filename} | {format_bytes(size)}")
+                    dashboard.add_event("info", "Detected", f"{filename} | {format_bytes(size)}", filename=filename)
                     dashboard.update_runtime(
                         state="downloading",
                         tone="info",
@@ -1171,6 +1421,7 @@ def main() -> int:
                             "success",
                             "Downloaded",
                             f"{filename} | {format_bytes(size)} | {format_duration(duration)} | {format_bytes(avg_speed)}/s",
+                            filename=filename,
                         )
 
                         if delete_after_download:
@@ -1192,7 +1443,7 @@ def main() -> int:
                             delete_remote_file(ftp, remote_dir, filename)
                             ui.clear_status_line()
                             logging.info("Deleted remote file: %s", filename)
-                            dashboard.add_event("info", "Remote deleted", filename)
+                            dashboard.add_event("info", "Remote deleted", filename, filename=filename)
 
                         downloaded_files.add(file_key)
                         save_state(state_file, downloaded_files)
