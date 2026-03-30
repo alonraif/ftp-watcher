@@ -5,6 +5,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import shutil
 import sys
 import threading
@@ -247,6 +248,12 @@ def shorten_filename(filename: str, max_width: int) -> str:
     return f"{base[:prefix_width]}...{suffix}"
 
 
+def clip_group_key(name: str) -> str:
+    stem = Path(name).stem.upper()
+    normalized = re.sub(r"[MS]\d{2}$", "", stem)
+    return normalized.rstrip("_-") or stem
+
+
 def format_timestamp(timestamp: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(timestamp))
 
@@ -297,6 +304,13 @@ def normalize_color_metadata(value: str) -> str:
     return value
 
 
+def format_timecode(value: str) -> str:
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if len(digits) != 8:
+        return value or "-"
+    return f"{digits[0:2]}:{digits[2:4]}:{digits[4:6]}:{digits[6:8]}"
+
+
 def parse_clip_metadata_from_xml(xml_path: Path) -> Optional[Dict[str, Any]]:
     namespace = {"nrt": "urn:schemas-professionalDisc:nonRealTimeMeta:ver.2.20"}
     try:
@@ -340,12 +354,16 @@ def parse_clip_metadata_from_xml(xml_path: Path) -> Optional[Dict[str, Any]]:
 
     manufacturer = attr("./nrt:Device", "manufacturer")
     model_name = attr("./nrt:Device", "modelName")
+    serial_number = attr("./nrt:Device", "serialNo")
     camera = " ".join(part for part in [manufacturer, model_name] if part).strip()
 
     return {
         "mp4_filename": related_file or f"{xml_path.stem}.MP4",
+        "xml_group_key": clip_group_key(xml_path.name),
+        "related_group_key": clip_group_key(related_file) if related_file else "",
         "xml_filename": xml_path.name,
         "camera": camera or "-",
+        "serial_number": serial_number or "",
         "created": format_iso_datetime(attr("./nrt:CreationDate", "value")),
         "resolution_fps": (
             f"{attr('./nrt:VideoFormat/nrt:VideoLayout', 'pixel')}x"
@@ -354,7 +372,7 @@ def parse_clip_metadata_from_xml(xml_path: Path) -> Optional[Dict[str, Any]]:
             else "-"
         ),
         "duration": format_clip_duration_from_frames(duration_frames, fps_value),
-        "timecode": start_tc or "-",
+        "timecode": format_timecode(start_tc),
         "gamma_color": ", ".join(part for part in [gamma, color] if part) or "-",
     }
 
@@ -459,13 +477,22 @@ class DashboardState:
             "clips": clips,
         }
 
-    def _upsert_clip(self, filename: str, **fields: Any) -> None:
+    def _upsert_clip(self, filename: str, group_key: Optional[str] = None, **fields: Any) -> None:
         now = time.time()
         with self.lock:
+            canonical_group_key = group_key or clip_group_key(filename)
+            clip_name = filename
+            for existing_name in list(self.clips):
+                existing_group_key = self.clips[existing_name].get("group_key") or clip_group_key(existing_name)
+                if existing_group_key == canonical_group_key:
+                    clip_name = existing_name
+                    break
+
             clip = self.clips.setdefault(
-                filename,
+                clip_name,
                 {
-                    "filename": filename,
+                    "filename": clip_name,
+                    "group_key": canonical_group_key,
                     "downloaded": False,
                     "downloaded_at": None,
                     "size_bytes": None,
@@ -475,6 +502,11 @@ class DashboardState:
                 },
             )
             clip.update(fields)
+            clip["group_key"] = canonical_group_key
+            if clip_name != filename and fields.get("downloaded"):
+                clip["filename"] = filename
+                self.clips[filename] = clip
+                del self.clips[clip_name]
             clip["updated_at"] = now
 
     def attach_xml_metadata(self, xml_path: Path) -> None:
@@ -482,13 +514,25 @@ class DashboardState:
         if metadata is None:
             return
         mp4_filename = metadata.pop("mp4_filename")
-        self._upsert_clip(mp4_filename, metadata=metadata)
+        xml_group_key = metadata.pop("xml_group_key", "")
+        related_group_key = metadata.pop("related_group_key", "")
+
+        preferred_filename = mp4_filename
+        with self.lock:
+            for existing_name, clip in self.clips.items():
+                existing_key = clip_group_key(existing_name)
+                if existing_key in {xml_group_key, related_group_key}:
+                    preferred_filename = clip.get("filename", existing_name)
+                    break
+
+        self._upsert_clip(preferred_filename, group_key=xml_group_key or related_group_key, metadata=metadata)
 
     def mark_clip_downloaded(self, filename: str, size_bytes: int, local_path: Path) -> None:
         if not filename.lower().endswith(".mp4"):
             return
         self._upsert_clip(
             filename,
+            group_key=clip_group_key(filename),
             downloaded=True,
             downloaded_at=time.time(),
             size_bytes=size_bytes,
@@ -708,6 +752,13 @@ def build_dashboard_html() -> str:
       font-weight: 700;
       line-height: 1.35;
       word-break: break-word;
+    }
+    .clip-cell .subv {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.86rem;
+      font-weight: 600;
     }
     .clip-action {
       margin-top: 10px;
@@ -953,6 +1004,9 @@ def build_dashboard_html() -> str:
         const metadata = clip.metadata || {};
         const el = document.createElement("div");
         el.className = "clip-card";
+        const cameraValue = metadata.serial_number
+          ? `${metadata.camera || "-"}<span class="subv">SN ${metadata.serial_number}</span>`
+          : (metadata.camera || "-");
         const action = isPlayableMp4(clip.filename)
           ? `<div class="clip-action"><button class="link-button" data-file="${clip.filename}">Play clip</button></div>`
           : "";
@@ -963,7 +1017,7 @@ def build_dashboard_html() -> str:
           </div>
           <div class="clip-meta">${clip.downloaded ? `${formatBytes(clip.size_bytes)} downloaded` : "Waiting for MP4 download"}${metadata.xml_filename ? ` | XML ${metadata.xml_filename}` : ""}</div>
           <div class="clip-grid">
-            <div class="clip-cell"><span class="k">Camera</span><span class="v">${metadata.camera || "-"}</span></div>
+            <div class="clip-cell"><span class="k">Camera</span><span class="v">${cameraValue}</span></div>
             <div class="clip-cell"><span class="k">Created</span><span class="v">${metadata.created || "-"}</span></div>
             <div class="clip-cell"><span class="k">Resolution / FPS</span><span class="v">${metadata.resolution_fps || "-"}</span></div>
             <div class="clip-cell"><span class="k">Duration</span><span class="v">${metadata.duration || "-"}</span></div>
