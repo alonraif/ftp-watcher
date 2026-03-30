@@ -6,10 +6,12 @@ import logging
 import os
 import shutil
 import sys
+import threading
 import time
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 def is_interactive() -> bool:
@@ -259,11 +261,536 @@ class SessionStats:
     idle_since: Optional[float] = None
 
 
+class DashboardState:
+    def __init__(self, config_data: Dict[str, Any]) -> None:
+        self.lock = threading.Lock()
+        self.started_at = time.time()
+        self.config_data = config_data
+        self.runtime: Dict[str, Any] = {
+            "state": "starting",
+            "tone": "info",
+            "status_message": "Booting watcher",
+            "last_poll_at": None,
+            "next_check_at": None,
+            "last_success_at": None,
+            "last_download_name": None,
+            "last_error": None,
+            "idle_since": None,
+            "files_downloaded": 0,
+            "bytes_downloaded": 0,
+            "failures": 0,
+            "skipped": 0,
+            "current_download": None,
+            "recent_events": [],
+        }
+
+    def update_runtime(self, **kwargs: Any) -> None:
+        with self.lock:
+            self.runtime.update(kwargs)
+
+    def set_current_download(
+        self,
+        filename: str,
+        downloaded: int,
+        total_size: int,
+        speed_bytes: float,
+        eta_seconds: Optional[float],
+    ) -> None:
+        current_download = {
+            "filename": filename,
+            "downloaded": downloaded,
+            "total_size": total_size,
+            "speed_bytes": speed_bytes,
+            "eta_seconds": eta_seconds,
+            "percent": (downloaded / total_size * 100.0) if total_size > 0 else None,
+        }
+        self.update_runtime(current_download=current_download)
+
+    def clear_current_download(self) -> None:
+        self.update_runtime(current_download=None)
+
+    def add_event(self, level: str, title: str, detail: str) -> None:
+        event = {
+            "time": time.time(),
+            "level": level,
+            "title": title,
+            "detail": detail,
+        }
+        with self.lock:
+            events = [event, *self.runtime["recent_events"]]
+            self.runtime["recent_events"] = events[:20]
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self.lock:
+            runtime = dict(self.runtime)
+            runtime["recent_events"] = list(self.runtime["recent_events"])
+            current_download = self.runtime["current_download"]
+            runtime["current_download"] = dict(current_download) if current_download else None
+        return {
+            "generated_at": time.time(),
+            "started_at": self.started_at,
+            "config": dict(self.config_data),
+            "runtime": runtime,
+        }
+
+
+def build_dashboard_html() -> str:
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FTP Watcher Dashboard</title>
+  <style>
+    :root {
+      --bg: #09131a;
+      --panel: rgba(10, 24, 33, 0.82);
+      --panel-strong: rgba(13, 33, 44, 0.95);
+      --border: rgba(157, 201, 184, 0.16);
+      --text: #ecf7f2;
+      --muted: #90a9a5;
+      --accent: #36d6a0;
+      --accent-2: #7be0ff;
+      --warn: #f8c05c;
+      --danger: #ff7c70;
+      --idle: #7aa5ff;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(54, 214, 160, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(123, 224, 255, 0.15), transparent 24%),
+        linear-gradient(180deg, #0a141b 0%, #081017 100%);
+    }
+    .shell {
+      width: min(1280px, calc(100vw - 32px));
+      margin: 24px auto;
+      display: grid;
+      gap: 18px;
+    }
+    .hero, .card {
+      background: var(--panel);
+      backdrop-filter: blur(18px);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+    }
+    .hero {
+      padding: 28px;
+      display: grid;
+      gap: 18px;
+    }
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: start;
+      flex-wrap: wrap;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3.6rem);
+      letter-spacing: -0.04em;
+    }
+    .sub {
+      color: var(--muted);
+      margin-top: 8px;
+      max-width: 760px;
+      line-height: 1.5;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.72rem;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 18px currentColor;
+    }
+    .hero-grid, .stats-grid, .lower-grid {
+      display: grid;
+      gap: 16px;
+    }
+    .hero-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+    .stats-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+    .lower-grid { grid-template-columns: 1.25fr 0.75fr; }
+    .mini {
+      padding: 18px 18px 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 20px;
+    }
+    .label {
+      color: var(--muted);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+    }
+    .value {
+      font-size: 1.12rem;
+      font-weight: 700;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+    .card {
+      padding: 22px;
+    }
+    .card h2 {
+      margin: 0 0 16px;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+    .status-line {
+      font-size: 1rem;
+      line-height: 1.6;
+      color: var(--text);
+      padding: 16px 18px;
+      border-radius: 18px;
+      background: var(--panel-strong);
+      border: 1px solid var(--border);
+    }
+    .progress-wrap {
+      display: grid;
+      gap: 12px;
+    }
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .bar {
+      width: 100%;
+      height: 18px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      border-radius: inherit;
+      transition: width 0.4s ease;
+    }
+    .event-list {
+      display: grid;
+      gap: 10px;
+      max-height: 460px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .event {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .event-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.88rem;
+      margin-bottom: 6px;
+    }
+    .event-title {
+      font-weight: 700;
+    }
+    .event-detail {
+      color: var(--muted);
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .muted {
+      color: var(--muted);
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .pill {
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    .pill strong {
+      color: var(--text);
+    }
+    @media (max-width: 980px) {
+      .lower-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="hero-top">
+        <div>
+          <h1>FTP Watcher</h1>
+          <div class="sub">Live operational dashboard for connection status, polling cadence, current transfers, and session history.</div>
+        </div>
+        <div class="badge"><span class="dot" id="state-dot"></span><span id="state-badge">Starting</span></div>
+      </div>
+      <div class="status-line" id="status-line">Loading dashboard…</div>
+      <div class="hero-grid">
+        <div class="mini"><div class="label">Remote</div><div class="value" id="remote-dir">-</div></div>
+        <div class="mini"><div class="label">Download Folder</div><div class="value" id="download-dir">-</div></div>
+        <div class="mini"><div class="label">Last Poll</div><div class="value" id="last-poll">-</div></div>
+        <div class="mini"><div class="label">Next Poll</div><div class="value" id="next-poll">-</div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Session Snapshot</h2>
+      <div class="stats-grid">
+        <div class="mini"><div class="label">Files Downloaded</div><div class="value" id="files-downloaded">0</div></div>
+        <div class="mini"><div class="label">Data Downloaded</div><div class="value" id="bytes-downloaded">0 B</div></div>
+        <div class="mini"><div class="label">Failures</div><div class="value" id="failures">0</div></div>
+        <div class="mini"><div class="label">Skipped</div><div class="value" id="skipped">0</div></div>
+        <div class="mini"><div class="label">Uptime</div><div class="value" id="uptime">00:00</div></div>
+        <div class="mini"><div class="label">Idle For</div><div class="value" id="idle-for">-</div></div>
+      </div>
+    </section>
+
+    <section class="lower-grid">
+      <section class="card">
+        <h2>Current Transfer</h2>
+        <div class="progress-wrap">
+          <div class="value" id="current-file">No active transfer</div>
+          <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+          <div class="progress-meta">
+            <span id="progress-left">Waiting for work</span>
+            <span id="progress-right">-</span>
+          </div>
+          <div class="pill-row">
+            <div class="pill"><strong>Last Success:</strong> <span id="last-success">-</span></div>
+            <div class="pill"><strong>Last File:</strong> <span id="last-file">-</span></div>
+            <div class="pill"><strong>Last Error:</strong> <span id="last-error">-</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Configuration</h2>
+        <div class="pill-row">
+          <div class="pill"><strong>Host:</strong> <span id="ftp-host">-</span></div>
+          <div class="pill"><strong>FTP Port:</strong> <span id="ftp-port">-</span></div>
+          <div class="pill"><strong>TLS:</strong> <span id="ftp-tls">-</span></div>
+          <div class="pill"><strong>Passive:</strong> <span id="ftp-passive">-</span></div>
+          <div class="pill"><strong>Poll Interval:</strong> <span id="poll-interval">-</span></div>
+          <div class="pill"><strong>Cleanup:</strong> <span id="cleanup-mode">-</span></div>
+          <div class="pill"><strong>UI Mode:</strong> <span id="ui-mode">-</span></div>
+        </div>
+      </section>
+    </section>
+
+    <section class="card">
+      <h2>Recent Activity</h2>
+      <div class="event-list" id="event-list"></div>
+    </section>
+  </div>
+
+  <script>
+    const byId = (id) => document.getElementById(id);
+
+    function formatBytes(bytes) {
+      if (bytes === null || bytes === undefined) return "-";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let value = Number(bytes);
+      let index = 0;
+      while (value >= 1024 && index < units.length - 1) {
+        value /= 1024;
+        index += 1;
+      }
+      return `${index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+    }
+
+    function formatClock(ts) {
+      if (!ts) return "-";
+      return new Date(ts * 1000).toLocaleTimeString();
+    }
+
+    function formatDuration(seconds) {
+      if (seconds === null || seconds === undefined) return "-";
+      const total = Math.max(0, Math.floor(seconds));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+
+    function stateColor(state) {
+      switch ((state || "").toLowerCase()) {
+        case "idle": return "var(--idle)";
+        case "retry": return "var(--warn)";
+        case "cleanup": return "var(--accent-2)";
+        case "ready": return "var(--accent)";
+        case "polling": return "var(--accent-2)";
+        case "downloading": return "var(--accent)";
+        default: return "var(--accent)";
+      }
+    }
+
+    function setText(id, value) {
+      byId(id).textContent = value ?? "-";
+    }
+
+    function renderEvents(events) {
+      const host = byId("event-list");
+      host.innerHTML = "";
+      if (!events.length) {
+        host.innerHTML = '<div class="event"><div class="event-detail">No activity yet.</div></div>';
+        return;
+      }
+      events.forEach((event) => {
+        const el = document.createElement("div");
+        el.className = "event";
+        el.innerHTML = `
+          <div class="event-head">
+            <span class="event-title">${event.title}</span>
+            <span class="muted">${formatClock(event.time)}</span>
+          </div>
+          <div class="event-detail">${event.detail}</div>
+        `;
+        host.appendChild(el);
+      });
+    }
+
+    function render(data) {
+      const runtime = data.runtime;
+      const config = data.config;
+      const now = data.generated_at;
+      const state = runtime.state || "starting";
+      byId("state-dot").style.color = stateColor(state);
+      byId("state-dot").style.background = stateColor(state);
+      setText("state-badge", state);
+      setText("status-line", runtime.status_message || "-");
+      setText("remote-dir", config.remote_dir);
+      setText("download-dir", config.download_dir);
+      setText("last-poll", formatClock(runtime.last_poll_at));
+      setText("next-poll", runtime.next_check_at ? formatDuration(runtime.next_check_at - now) : "-");
+      setText("files-downloaded", runtime.files_downloaded);
+      setText("bytes-downloaded", formatBytes(runtime.bytes_downloaded));
+      setText("failures", runtime.failures);
+      setText("skipped", runtime.skipped);
+      setText("uptime", formatDuration(now - data.started_at));
+      setText("idle-for", runtime.idle_since ? formatDuration(now - runtime.idle_since) : "-");
+      setText("last-success", formatClock(runtime.last_success_at));
+      setText("last-file", runtime.last_download_name || "-");
+      setText("last-error", runtime.last_error || "-");
+      setText("ftp-host", config.ftp_host);
+      setText("ftp-port", config.ftp_port);
+      setText("ftp-tls", config.use_tls ? "enabled" : "off");
+      setText("ftp-passive", config.passive ? "yes" : "no");
+      setText("poll-interval", `${config.poll_interval_seconds}s`);
+      setText("cleanup-mode", config.delete_remote_after_download ? "delete remote" : "keep remote");
+      setText("ui-mode", config.ui_mode);
+
+      const current = runtime.current_download;
+      if (current) {
+        setText("current-file", current.filename);
+        setText("progress-left", `${(current.percent || 0).toFixed(2)}% | ${formatBytes(current.downloaded)}/${formatBytes(current.total_size)}`);
+        setText("progress-right", `${formatBytes(current.speed_bytes)}/s | ETA ${formatDuration(current.eta_seconds || 0)}`);
+        byId("bar-fill").style.width = `${Math.max(0, Math.min(100, current.percent || 0))}%`;
+      } else {
+        setText("current-file", "No active transfer");
+        setText("progress-left", "Waiting for work");
+        setText("progress-right", runtime.state ? `State: ${runtime.state}` : "-");
+        byId("bar-fill").style.width = "0%";
+      }
+
+      renderEvents(runtime.recent_events || []);
+    }
+
+    async function refresh() {
+      try {
+        const response = await fetch("/api/status", { cache: "no-store" });
+        const data = await response.json();
+        render(data);
+      } catch (error) {
+        setText("status-line", `Dashboard connection error: ${error}`);
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>"""
+
+
+def start_web_server(host: str, port: int, dashboard_state: DashboardState) -> ThreadingHTTPServer:
+    dashboard_html = build_dashboard_html().encode("utf-8")
+
+    class DashboardHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path in {"/", "/index.html"}:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(dashboard_html)))
+                self.end_headers()
+                self.wfile.write(dashboard_html)
+                return
+
+            if self.path == "/api/status":
+                payload = json.dumps(dashboard_state.snapshot()).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            self.send_error(404, "Not Found")
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    server = ThreadingHTTPServer((host, port), DashboardHandler)
+    thread = threading.Thread(target=server.serve_forever, name="ftp-watcher-web", daemon=True)
+    thread.start()
+    return server
+
+
 class ProgressTracker:
-    def __init__(self, filename: str, total_size: int, enabled: bool) -> None:
+    def __init__(
+        self,
+        filename: str,
+        total_size: int,
+        enabled: bool,
+        progress_callback: Optional[Any] = None,
+    ) -> None:
         self.filename = filename
         self.total_size = total_size
         self.enabled = enabled
+        self.progress_callback = progress_callback
         self.downloaded = 0
         self.start_time = time.time()
         self.last_render = 0.0
@@ -272,15 +799,7 @@ class ProgressTracker:
 
     def update(self, chunk: bytes) -> None:
         self.downloaded += len(chunk)
-
-        if not self.enabled:
-            return
-
         now = time.time()
-        if now - self.last_render < 0.1 and self.downloaded < self.total_size:
-            return
-        self.last_render = now
-
         elapsed = max(now - self.start_time, 0.001)
         instant_speed = self.downloaded / elapsed
         if self.smoothed_speed is None:
@@ -288,6 +807,28 @@ class ProgressTracker:
         else:
             self.smoothed_speed = (self.smoothed_speed * 0.7) + (instant_speed * 0.3)
         speed = self.smoothed_speed
+
+        if self.progress_callback is not None:
+            eta_seconds = (
+                (self.total_size - self.downloaded) / speed
+                if self.total_size > 0 and speed > 0
+                else None
+            )
+            self.progress_callback(
+                filename=self.filename,
+                downloaded=self.downloaded,
+                total_size=self.total_size,
+                speed_bytes=speed,
+                eta_seconds=eta_seconds,
+            )
+
+        if not self.enabled:
+            return
+
+        if now - self.last_render < 0.1 and self.downloaded < self.total_size:
+            return
+        self.last_render = now
+
         width = max(72, self.ui.terminal_width())
 
         if self.total_size > 0:
@@ -340,6 +881,7 @@ def download_file(
     temp_suffix: str,
     total_size: int,
     show_progress: bool,
+    progress_callback: Optional[Any] = None,
 ) -> Path:
     ftp.cwd(remote_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
@@ -347,7 +889,12 @@ def download_file(
     final_path = local_dir / filename
     temp_path = local_dir / f"{filename}{temp_suffix}"
 
-    tracker = ProgressTracker(filename, total_size, show_progress)
+    tracker = ProgressTracker(
+        filename=filename,
+        total_size=total_size,
+        enabled=show_progress,
+        progress_callback=progress_callback,
+    )
 
     with temp_path.open("wb") as f:
         def callback(chunk: bytes) -> None:
@@ -461,14 +1008,58 @@ def main() -> int:
     ui_mode = get_ui_mode(config)
     show_progress = get_bool(config, "watcher", "show_progress", True) and is_interactive() and ui_mode != "off"
     ui = TerminalUI(show_progress, rich=(ui_mode == "rich"))
+    web_enabled = get_bool(config, "web", "enabled", True) if "web" in config else True
+    web_host = config["web"].get("host", "127.0.0.1") if "web" in config else "127.0.0.1"
+    web_port = get_int(config, "web", "port", 8080) if "web" in config else 8080
 
     downloaded_files = load_state(state_file)
     session = SessionStats(started_at=time.time())
+    dashboard = DashboardState(
+        {
+            "ftp_host": config["ftp"]["host"],
+            "ftp_port": get_int(config, "ftp", "port", 21),
+            "remote_dir": remote_dir,
+            "download_dir": str(download_dir),
+            "poll_interval_seconds": poll_interval,
+            "delete_remote_after_download": delete_after_download,
+            "use_tls": get_bool(config, "ftp", "use_tls", False),
+            "passive": get_bool(config, "ftp", "passive", True),
+            "ui_mode": ui_mode,
+            "web_enabled": web_enabled,
+            "web_host": web_host,
+            "web_port": web_port,
+        }
+    )
+    web_server: Optional[ThreadingHTTPServer] = None
+    if web_enabled:
+        try:
+            web_server = start_web_server(web_host, web_port, dashboard)
+            dashboard.add_event("info", "Dashboard online", f"http://{web_host}:{web_port}")
+        except OSError as exc:
+            web_enabled = False
+            dashboard.config_data["web_enabled"] = False
+            dashboard.update_runtime(
+                state="warn",
+                tone="warn",
+                status_message=f"Web dashboard disabled: {exc}",
+            )
+            dashboard.add_event("error", "Dashboard failed", str(exc))
+            logging.warning("Web dashboard disabled: %s", exc)
 
     logging.info("Watching FTP folder: %s", remote_dir)
     logging.info("Downloading to: %s", download_dir)
     logging.info("Delete remote after success: %s", delete_after_download)
     logging.info("Interactive progress display: %s", show_progress)
+    logging.info("Web dashboard: %s", f"http://{web_host}:{web_port}" if web_enabled else "disabled")
+    dashboard.update_runtime(
+        state="ready",
+        tone="success",
+        status_message=f"Watcher started | dashboard {'enabled' if web_enabled else 'disabled'}",
+        files_downloaded=session.files_downloaded,
+        bytes_downloaded=session.bytes_downloaded,
+        failures=session.failures,
+        skipped=session.skipped,
+    )
 
     ui.print_header(
         "FTP Watcher",
@@ -479,6 +1070,7 @@ def main() -> int:
             ("Cleanup", "delete remote files" if delete_after_download else "keep remote files"),
             ("State", str(state_file)),
             ("UI", ui_mode),
+            ("Web", f"http://{web_host}:{web_port}" if web_enabled else "disabled"),
         ],
     )
     ui.print_progress_legend()
@@ -491,6 +1083,21 @@ def main() -> int:
                 files_processed = 0
                 skipped_this_poll = 0
                 session.last_poll_at = cycle_start
+                dashboard.update_runtime(
+                    state="polling",
+                    tone="info",
+                    status_message="Connecting to FTP",
+                    last_poll_at=cycle_start,
+                    next_check_at=None,
+                    idle_since=session.idle_since,
+                    last_success_at=session.last_success_at,
+                    last_download_name=session.last_download_name if session.last_download_name != "-" else None,
+                    last_error=session.last_error if session.last_error != "-" else None,
+                    files_downloaded=session.files_downloaded,
+                    bytes_downloaded=session.bytes_downloaded,
+                    failures=session.failures,
+                    skipped=session.skipped,
+                )
                 ui.render_status_line(
                     state="POLLING",
                     message=build_status_message(
@@ -502,6 +1109,11 @@ def main() -> int:
                     tone="info",
                 )
                 ftp = connect_ftp(config)
+                dashboard.update_runtime(
+                    state="polling",
+                    tone="info",
+                    status_message="Connected to FTP, listing files",
+                )
                 ui.render_status_line(
                     state="POLLING",
                     message=build_status_message(
@@ -523,6 +1135,13 @@ def main() -> int:
 
                     ui.clear_status_line()
                     logging.info("Detected | %s | %s", filename, format_bytes(size))
+                    dashboard.add_event("info", "Detected", f"{filename} | {format_bytes(size)}")
+                    dashboard.update_runtime(
+                        state="downloading",
+                        tone="info",
+                        status_message=f"Downloading {filename}",
+                        last_error=None,
+                    )
 
                     try:
                         download_started = time.time()
@@ -534,6 +1153,7 @@ def main() -> int:
                             temp_suffix=temp_suffix,
                             total_size=size,
                             show_progress=show_progress,
+                            progress_callback=dashboard.set_current_download,
                         )
 
                         duration = max(time.time() - download_started, 0.001)
@@ -547,8 +1167,18 @@ def main() -> int:
                             format_bytes(avg_speed),
                             local_path,
                         )
+                        dashboard.add_event(
+                            "success",
+                            "Downloaded",
+                            f"{filename} | {format_bytes(size)} | {format_duration(duration)} | {format_bytes(avg_speed)}/s",
+                        )
 
                         if delete_after_download:
+                            dashboard.update_runtime(
+                                state="cleanup",
+                                tone="info",
+                                status_message=f"Deleting remote copy of {filename}",
+                            )
                             ui.render_status_line(
                                 state="CLEANUP",
                                 message=build_status_message(
@@ -562,6 +1192,7 @@ def main() -> int:
                             delete_remote_file(ftp, remote_dir, filename)
                             ui.clear_status_line()
                             logging.info("Deleted remote file: %s", filename)
+                            dashboard.add_event("info", "Remote deleted", filename)
 
                         downloaded_files.add(file_key)
                         save_state(state_file, downloaded_files)
@@ -572,11 +1203,34 @@ def main() -> int:
                         session.last_download_name = filename
                         session.last_error = "-"
                         session.idle_since = None
+                        dashboard.clear_current_download()
+                        dashboard.update_runtime(
+                            state="ready",
+                            tone="success",
+                            status_message=f"Downloaded {filename}",
+                            last_success_at=session.last_success_at,
+                            last_download_name=filename,
+                            idle_since=None,
+                            files_downloaded=session.files_downloaded,
+                            bytes_downloaded=session.bytes_downloaded,
+                            failures=session.failures,
+                            skipped=session.skipped,
+                            last_error=None,
+                        )
 
                     except Exception as exc:
                         ui.clear_status_line()
                         session.failures += 1
                         session.last_error = str(exc)
+                        dashboard.clear_current_download()
+                        dashboard.update_runtime(
+                            state="retry",
+                            tone="warn",
+                            status_message=f"Failed processing {filename}: {exc}",
+                            failures=session.failures,
+                            last_error=str(exc),
+                        )
+                        dashboard.add_event("error", "Processing error", f"{filename} | {exc}")
                         log_processing_error(filename, exc, debug_tracebacks)
 
                 session.skipped += skipped_this_poll
@@ -585,6 +1239,17 @@ def main() -> int:
                     if files_processed == 0:
                         if session.idle_since is None:
                             session.idle_since = cycle_start
+                        dashboard.update_runtime(
+                            state="idle",
+                            tone="idle",
+                            status_message="FTP live, waiting for new files",
+                            next_check_at=time.time() + poll_interval,
+                            idle_since=session.idle_since,
+                            files_downloaded=session.files_downloaded,
+                            bytes_downloaded=session.bytes_downloaded,
+                            failures=session.failures,
+                            skipped=session.skipped,
+                        )
                         render_sleep_status(
                             ui=ui,
                             stats=session,
@@ -594,6 +1259,17 @@ def main() -> int:
                             extra=f"no new files, skipped {skipped_this_poll}",
                         )
                     else:
+                        dashboard.update_runtime(
+                            state="ready",
+                            tone="success",
+                            status_message=f"Processed {files_processed} file(s)",
+                            next_check_at=time.time() + poll_interval,
+                            idle_since=session.idle_since,
+                            files_downloaded=session.files_downloaded,
+                            bytes_downloaded=session.bytes_downloaded,
+                            failures=session.failures,
+                            skipped=session.skipped,
+                        )
                         render_sleep_status(
                             ui=ui,
                             stats=session,
@@ -603,12 +1279,33 @@ def main() -> int:
                             extra=f"processed {files_processed}, skipped {skipped_this_poll}",
                         )
                 else:
+                    dashboard.update_runtime(
+                        state="idle" if files_processed == 0 else "ready",
+                        tone="idle" if files_processed == 0 else "success",
+                        status_message="Waiting for next poll",
+                        next_check_at=time.time() + poll_interval,
+                        idle_since=session.idle_since,
+                        files_downloaded=session.files_downloaded,
+                        bytes_downloaded=session.bytes_downloaded,
+                        failures=session.failures,
+                        skipped=session.skipped,
+                    )
                     time.sleep(poll_interval)
 
             except Exception as exc:
                 ui.clear_status_line()
                 session.failures += 1
                 session.last_error = str(exc)
+                dashboard.clear_current_download()
+                dashboard.update_runtime(
+                    state="retry",
+                    tone="warn",
+                    status_message=f"FTP polling failed: {exc}",
+                    failures=session.failures,
+                    last_error=str(exc),
+                    next_check_at=time.time() + poll_interval,
+                )
+                dashboard.add_event("error", "Polling error", str(exc))
                 log_polling_error(exc, debug_tracebacks)
                 if show_progress:
                     render_sleep_status(
@@ -634,8 +1331,14 @@ def main() -> int:
 
     except KeyboardInterrupt:
         ui.clear_status_line()
+        dashboard.update_runtime(state="stopped", tone="warn", status_message="Stopped by user")
+        dashboard.add_event("warn", "Stopped", "Watcher stopped by user")
         logging.info("Stopped by user.")
         return 0
+    finally:
+        if web_server is not None:
+            web_server.shutdown()
+            web_server.server_close()
 
 
 if __name__ == "__main__":

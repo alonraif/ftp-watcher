@@ -7,6 +7,7 @@ A Python tool that monitors a remote FTP directory and automatically downloads n
 - **Automatic Monitoring**: Continuously polls a remote FTP directory for new files
 - **Incremental Downloads**: Tracks downloaded files to avoid re-downloading
 - **Interactive Terminal UI**: Startup summary, per-file progress bar, idle heartbeat, and retry status lines in interactive terminals
+- **Built-In Web Dashboard**: Live browser UI for connection state, transfers, counters, last errors, and recent activity
 - **Live Status Footer**: Single-line connection state, countdown, last poll time, uptime, and transfer counters
 - **Progress Tracking**: Real-time progress bar with percent, size, smoothed speed, and ETA
 - **FTP/FTPS Support**: Works with standard FTP and secure FTP (TLS) connections
@@ -67,6 +68,11 @@ show_progress = true             # Show interactive progress and status output i
 ui_mode = rich                   # rich, minimal, or off
 debug_tracebacks = false         # Show full stack traces for processing/polling errors
 log_to_file = false              # Enable file logging
+
+[web]
+enabled = true                   # Start the web dashboard
+host = 127.0.0.1                # Interface to bind
+port = 8080                     # Dashboard port
 ```
 
 ## Usage
@@ -75,6 +81,12 @@ Run the watcher:
 ```bash
 python3 ftp_watcher.py config.ini
 ```
+
+If the web dashboard is enabled, open:
+```text
+http://127.0.0.1:8080
+```
+Adjust the host and port in `config.ini` as needed.
 
 The tool will:
 1. Connect to the FTP server
@@ -92,11 +104,26 @@ When `show_progress = true` and the script is running in an interactive terminal
 - A single live footer with connection state, last poll time, countdown, uptime, success/failure counters, and last successful download
 - A retry footer when polling fails
 
+When `[web] enabled = true`, the watcher also serves a live dashboard that shows:
+
+- Connection state and current watcher phase
+- Last poll time and time until the next poll
+- Current file transfer with progress, speed, and ETA
+- Session counters for files, bytes, failures, and skipped files
+- Last successful download and last error
+- Recent activity events such as detection, downloads, cleanup, and polling failures
+
 `ui_mode` values:
 
 - `rich`: full header, legend, colors, progress bar, and live footer
 - `minimal`: progress bar and live footer without the richer header/legend treatment
 - `off`: disable interactive UI even in a TTY
+
+Web dashboard notes:
+
+- The dashboard is built with Python standard library only; no extra dependencies are required
+- If the configured web port is unavailable, the watcher keeps running and logs that the dashboard was disabled
+- The browser UI polls `/api/status` once per second for live updates
 
 ## How It Works
 
@@ -108,9 +135,11 @@ When `show_progress = true` and the script is running in an interactive terminal
 
 4. **Interactive Output**: In a TTY, progress is shown as a compact line such as `73.50% | 82.5 MB/112.2 MB | 11.4 MB/s | ETA 00:24`, and the footer shows state such as `IDLE`, `POLLING`, `READY`, `CLEANUP`, or `RETRY`.
 
-5. **Session Stats**: The live footer tracks uptime, downloaded file count, downloaded data volume, failures, last poll time, and the last successful download.
+5. **Web Dashboard**: A local HTTP server exposes a single-page dashboard and a JSON status endpoint with the current transfer, recent events, session counters, and connection state.
 
-6. **Error Handling**: Connection failures and download errors are logged. The tool attempts to continue operation rather than crashing. Full tracebacks can be enabled with `debug_tracebacks = true`.
+6. **Session Stats**: The live footer and web dashboard track uptime, downloaded file count, downloaded data volume, failures, last poll time, and the last successful download.
+
+7. **Error Handling**: Connection failures and download errors are logged. The tool attempts to continue operation rather than crashing. Full tracebacks can be enabled with `debug_tracebacks = true`.
 
 ## Example Workflow
 
@@ -151,6 +180,11 @@ Example:
 **No progress UI appears**:
 - Confirm `show_progress = true` in `config.ini`
 - Run the script in a real terminal; interactive progress is disabled when stdout is redirected or non-interactive
+
+**Web dashboard does not open**:
+- Confirm `[web] enabled = true` in `config.ini`
+- Verify the configured `host` and `port`
+- Check the watcher logs for a port bind failure; the script will continue running even if the dashboard cannot start
 
 **Too much UI output for your environment**:
 - Set `ui_mode = minimal` for a lighter interactive display
