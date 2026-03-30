@@ -546,7 +546,7 @@ def build_dashboard_html() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FTP Watcher Dashboard</title>
+  <title>FTP Sync Dashboard</title>
   <style>
     :root {
       --bg: #f4eee5;
@@ -598,6 +598,19 @@ def build_dashboard_html() -> str:
       gap: 16px;
       align-items: start;
       flex-wrap: wrap;
+    }
+    .hero-brand {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-width: 0;
+    }
+    .hero-logo {
+      width: 96px;
+      height: auto;
+      display: block;
+      object-fit: contain;
+      flex: 0 0 auto;
     }
     h1 {
       margin: 0;
@@ -674,15 +687,6 @@ def build_dashboard_html() -> str:
       margin: 0 0 16px;
       font-size: 1.15rem;
       letter-spacing: -0.02em;
-    }
-    .status-line {
-      font-size: 1rem;
-      line-height: 1.6;
-      color: var(--text);
-      padding: 16px 18px;
-      border-radius: 18px;
-      background: var(--panel-strong);
-      border: 1px solid var(--border);
     }
     .progress-wrap {
       display: grid;
@@ -859,6 +863,12 @@ def build_dashboard_html() -> str:
       background: #f1ebe2;
     }
     @media (max-width: 760px) {
+      .hero-brand {
+        align-items: flex-start;
+      }
+      .hero-logo {
+        width: 78px;
+      }
       .hero-side {
         justify-items: start;
       }
@@ -872,9 +882,12 @@ def build_dashboard_html() -> str:
   <div class="shell">
     <section class="hero">
       <div class="hero-top">
-        <div>
-          <h1>FTP Watcher</h1>
-          <div class="sub">Live operational dashboard for connection status, polling cadence, current transfers, and session history.</div>
+        <div class="hero-brand">
+          <img class="hero-logo" src="https://cdn-liveutv.pressidium.com/wp-content/uploads/2024/01/Live-and-Ulimted-Light-Background-V2.png" alt="LiveU logo">
+          <div>
+            <h1>FTP Sync</h1>
+            <div class="sub">FTP sync tool</div>
+          </div>
         </div>
         <div class="hero-side">
           <div class="badge"><span class="dot" id="state-dot"></span><span id="state-badge">Starting</span></div>
@@ -884,7 +897,6 @@ def build_dashboard_html() -> str:
           </div>
         </div>
       </div>
-      <div class="status-line" id="status-line">Loading dashboard…</div>
     </section>
 
     <section class="card">
@@ -1043,7 +1055,6 @@ def build_dashboard_html() -> str:
       byId("state-dot").style.color = stateColor(state);
       byId("state-dot").style.background = stateColor(state);
       setText("state-badge", state);
-      setText("status-line", runtime.status_message || "-");
       setText("last-poll-inline", `Last poll: ${formatClock(runtime.last_poll_at)}`);
       setText("next-poll-inline", `Next poll: ${runtime.next_check_at ? formatDuration(runtime.next_check_at - now) : "-"}`);
       setText("files-downloaded", runtime.files_downloaded);
@@ -1091,7 +1102,7 @@ def build_dashboard_html() -> str:
         const data = await response.json();
         render(data);
       } catch (error) {
-        setText("status-line", `Dashboard connection error: ${error}`);
+        setText("state-badge", "offline");
       }
     }
 
