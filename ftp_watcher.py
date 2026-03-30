@@ -606,7 +606,7 @@ def build_dashboard_html() -> str:
       min-width: 0;
     }
     .hero-logo {
-      width: 96px;
+      width: 132px;
       height: auto;
       display: block;
       object-fit: contain;
@@ -614,14 +614,8 @@ def build_dashboard_html() -> str:
     }
     h1 {
       margin: 0;
-      font-size: clamp(2rem, 4vw, 3.6rem);
+      font-size: clamp(1.6rem, 3vw, 2.8rem);
       letter-spacing: -0.04em;
-    }
-    .sub {
-      color: var(--muted);
-      margin-top: 8px;
-      max-width: 760px;
-      line-height: 1.5;
     }
     .badge {
       display: inline-flex;
@@ -867,7 +861,7 @@ def build_dashboard_html() -> str:
         align-items: flex-start;
       }
       .hero-logo {
-        width: 78px;
+        width: 108px;
       }
       .hero-side {
         justify-items: start;
@@ -886,7 +880,6 @@ def build_dashboard_html() -> str:
           <img class="hero-logo" src="https://cdn-liveutv.pressidium.com/wp-content/uploads/2024/01/Live-and-Ulimted-Light-Background-V2.png" alt="LiveU logo">
           <div>
             <h1>FTP Sync</h1>
-            <div class="sub">FTP sync tool</div>
           </div>
         </div>
         <div class="hero-side">
