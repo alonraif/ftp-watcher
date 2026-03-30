@@ -921,7 +921,10 @@ def start_web_server(
                 chunk = fh.read(min(64 * 1024, remaining))
                 if not chunk:
                     break
-                handler.wfile.write(chunk)
+                try:
+                    handler.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
                 remaining -= len(chunk)
 
     def build_player_html(filename: str) -> bytes:
