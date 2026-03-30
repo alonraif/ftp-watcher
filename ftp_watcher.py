@@ -606,7 +606,7 @@ def build_dashboard_html() -> str:
       min-width: 0;
     }
     .hero-logo {
-      width: 132px;
+      width: 264px;
       height: auto;
       display: block;
       object-fit: contain;
@@ -614,7 +614,7 @@ def build_dashboard_html() -> str:
     }
     h1 {
       margin: 0;
-      font-size: clamp(1.6rem, 3vw, 2.8rem);
+      font-size: clamp(1.2rem, 2.2vw, 2rem);
       letter-spacing: -0.04em;
     }
     .badge {
@@ -861,7 +861,7 @@ def build_dashboard_html() -> str:
         align-items: flex-start;
       }
       .hero-logo {
-        width: 108px;
+        width: 176px;
       }
       .hero-side {
         justify-items: start;
