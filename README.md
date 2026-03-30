@@ -6,7 +6,8 @@ A Python tool that monitors a remote FTP directory and automatically downloads n
 
 - **Automatic Monitoring**: Continuously polls a remote FTP directory for new files
 - **Incremental Downloads**: Tracks downloaded files to avoid re-downloading
-- **Progress Tracking**: Real-time progress bar with download speed and ETA
+- **Interactive Terminal UI**: Startup summary, per-file progress bar, idle heartbeat, and retry status lines in interactive terminals
+- **Progress Tracking**: Real-time progress bar with percent, size, speed, and ETA
 - **FTP/FTPS Support**: Works with standard FTP and secure FTP (TLS) connections
 - **Passive Mode**: Configurable FTP passive/active modes
 - **State Persistence**: Remembers downloaded files across runs using JSON
@@ -28,6 +29,8 @@ cd ftp-watcher
 ```
 
 2. No additional dependencies needed - uses Python standard library only!
+
+The repository already includes a `downloads/` directory, which matches the default `download_dir` value in `config.ini`.
 
 ## Configuration
 
@@ -58,7 +61,7 @@ poll_interval_seconds = 10       # Interval between directory checks (seconds)
 state_file = ./downloaded_files.json  # File to track downloaded files
 temp_suffix = .part              # Suffix for incomplete downloads
 delete_remote_after_download = true   # Delete file on server after download
-show_progress = true             # Show download progress bar
+show_progress = true             # Show interactive progress and status output in a TTY
 log_to_file = false              # Enable file logging
 ```
 
@@ -77,6 +80,13 @@ The tool will:
 5. Wait for the configured poll interval
 6. Repeat steps 2-5
 
+When `show_progress = true` and the script is running in an interactive terminal, the watcher displays:
+
+- A startup summary with remote path, local download path, poll interval, cleanup mode, and state file
+- A live per-file progress line with percent, transferred size, speed, and `ETA mm:ss`
+- A heartbeat line after each poll when no new files are found
+- A retry status line when polling fails
+
 ## How It Works
 
 1. **File Tracking**: Files are tracked by a combination of filename, size, and modification time, preventing duplicate downloads even if the file is re-uploaded with the same name.
@@ -85,7 +95,9 @@ The tool will:
 
 3. **State Persistence**: Downloaded file information is stored in `downloaded_files.json`, allowing the tool to safely resume after restarts without re-downloading.
 
-4. **Error Handling**: Connection failures and download errors are logged. The tool attempts to continue operation rather than crashing.
+4. **Interactive Output**: In a TTY, progress is shown as a compact line such as `73.50% | 82.5 MB/112.2 MB | 11.4 MB/s | ETA 00:24`.
+
+5. **Error Handling**: Connection failures and download errors are logged. The tool attempts to continue operation rather than crashing.
 
 ## Example Workflow
 
@@ -94,8 +106,9 @@ The tool will:
 2. Configure FTP-Watcher to monitor the `/photos` directory
 3. Run: python3 ftp_watcher.py config.ini
 4. Every 10 seconds, new photos are automatically downloaded to ./downloads
-5. Track which photos have been processed via the state file
-6. Optionally delete photos from the server after download
+5. If nothing new appears, the watcher still prints a status line so you know it is running
+6. Track which photos have been processed via the state file
+7. Optionally delete photos from the server after download
 ```
 
 ## State File Format
@@ -121,6 +134,10 @@ Example:
 - Verify the `remote_dir` path exists on the FTP server
 - Check user permissions on the remote directory
 - Ensure `download_dir` is writable locally
+
+**No progress UI appears**:
+- Confirm `show_progress = true` in `config.ini`
+- Run the script in a real terminal; interactive progress is disabled when stdout is redirected or non-interactive
 
 **Stuck at 0%**: May indicate a large file with no size information from the FTP server
 
