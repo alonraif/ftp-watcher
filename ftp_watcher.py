@@ -192,6 +192,12 @@ def shorten_text(text: str, max_width: int) -> str:
     return f"{text[:max_width - 3]}..."
 
 
+def pad_text(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    return shorten_text(text, width).ljust(width)
+
+
 def format_timestamp(timestamp: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(timestamp))
 
@@ -220,36 +226,40 @@ class ProgressTracker:
         elapsed = max(now - self.start_time, 0.001)
         speed = self.downloaded / elapsed
         width = max(72, self.ui.terminal_width())
-        name_width = min(24, max(18, width // 5))
-        fixed_width = name_width + 39
-        bar_width = max(12, width - fixed_width)
-        label = shorten_text(self.filename, name_width).ljust(name_width)
 
         if self.total_size > 0:
             percent = min(self.downloaded / self.total_size, 1.0)
+            stats = (
+                f"{percent * 100:6.2f}% "
+                f"{format_bytes(self.downloaded)}/{format_bytes(self.total_size)} "
+                f"{format_bytes(speed)}/s "
+                f"ETA {format_duration((self.total_size - self.downloaded) / speed if speed > 0 else 0)}"
+            )
+            min_bar_width = 12
+            reserved_width = len(stats) + min_bar_width + 4
+            name_width = min(24, max(16, width - reserved_width))
+            bar_width = max(min_bar_width, width - (name_width + len(stats) + 4))
+            label = pad_text(self.filename, name_width)
             filled = int(bar_width * percent)
             if filled >= bar_width:
                 bar = "=" * bar_width
             else:
                 bar = "=" * filled + ">" + "." * max(0, bar_width - filled - 1)
-            eta_seconds = (self.total_size - self.downloaded) / speed if speed > 0 else 0
             line = (
                 f"\r{self.ui.style(label, self.ui.BOLD)} "
                 f"[{self.ui.style(bar, self.ui.CYAN)}] "
-                f"{percent * 100:6.2f}% "
-                f"{format_bytes(self.downloaded)}/{format_bytes(self.total_size)} "
-                f"{format_bytes(speed)}/s "
-                f"ETA {format_duration(eta_seconds)}"
+                f"{stats}"
             )
         else:
+            stats = f"{format_bytes(self.downloaded)} {format_bytes(speed)}/s"
+            name_width = min(24, max(16, width - len(stats) - 20))
+            label = pad_text(self.filename, name_width)
             line = (
                 f"\r{self.ui.style(label, self.ui.BOLD)} "
-                f"{format_bytes(self.downloaded)} "
-                f"{format_bytes(speed)}/s "
+                f"{stats} "
                 f"{self.ui.style('(size unavailable)', self.ui.DIM)}"
             )
 
-        line = shorten_text(line, width)
         sys.stdout.write(line)
         sys.stdout.flush()
 
