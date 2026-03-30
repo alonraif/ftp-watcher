@@ -547,6 +547,7 @@ def build_dashboard_html() -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FTP Sync Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f4eee5'/%3E%3Cpath d='M12 22a6 6 0 0 1 6-6h13l4 5h11a6 6 0 0 1 6 6v15a6 6 0 0 1-6 6H18a6 6 0 0 1-6-6V22Z' fill='%232b7c99'/%3E%3Crect x='16' y='28' width='32' height='8' rx='4' fill='%23ffffff' opacity='.95'/%3E%3Ccircle cx='24' cy='32' r='2.3' fill='%231e9a75'/%3E%3Ccircle cx='32' cy='32' r='2.3' fill='%231e9a75'/%3E%3Ccircle cx='40' cy='32' r='2.3' fill='%231e9a75'/%3E%3C/svg%3E">
   <style>
     :root {
       --bg: #f4eee5;
