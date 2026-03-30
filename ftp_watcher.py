@@ -230,10 +230,10 @@ class ProgressTracker:
         if self.total_size > 0:
             percent = min(self.downloaded / self.total_size, 1.0)
             stats = (
-                f"{percent * 100:6.2f}% "
-                f"{format_bytes(self.downloaded)}/{format_bytes(self.total_size)} "
-                f"{format_bytes(speed)}/s "
-                f"ETA {format_duration((self.total_size - self.downloaded) / speed if speed > 0 else 0)}"
+                f"{percent * 100:6.2f}%"
+                f" | {format_bytes(self.downloaded)}/{format_bytes(self.total_size)}"
+                f" | {format_bytes(speed)}/s"
+                f" | ETA {format_duration((self.total_size - self.downloaded) / speed if speed > 0 else 0)}"
             )
             min_bar_width = 12
             reserved_width = len(stats) + min_bar_width + 4
