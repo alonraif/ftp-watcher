@@ -242,7 +242,7 @@ class ProgressTracker:
                 bar = "=" * filled + ">" + "." * max(0, bar_width - filled - 1)
             eta_seconds = (self.total_size - self.downloaded) / speed if speed > 0 else 0
             line = (
-                f"\r{self.ui.style(label, self.BOLD)} "
+                f"\r{self.ui.style(label, self.ui.BOLD)} "
                 f"[{self.ui.style(bar, self.CYAN)}] "
                 f"{percent * 100:6.2f}% "
                 f"{format_bytes(self.downloaded).rjust(8)}/{format_bytes(self.total_size).ljust(8)} "
@@ -251,7 +251,7 @@ class ProgressTracker:
             )
         else:
             line = (
-                f"\r{self.ui.style(label, self.BOLD)} "
+                f"\r{self.ui.style(label, self.ui.BOLD)} "
                 f"{format_bytes(self.downloaded).rjust(8)} "
                 f"{format_bytes(speed).rjust(8)}/s "
                 f"{self.ui.style('(size unavailable)', self.DIM)}"
