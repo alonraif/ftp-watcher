@@ -111,8 +111,9 @@ When `[web] enabled = true`, the watcher also serves a live dashboard that shows
 - Current file transfer with progress, speed, and ETA
 - Session counters for files, bytes, failures, and skipped files
 - Last successful download and last error
-- Recent activity events such as detection, downloads, cleanup, and polling failures
+- A clip list that shows MP4 files only, not their sidecar XML files
 - Clickable MP4 items that open an embedded browser player and autoplay the clip
+- XML-derived clip metadata including camera, creation time, resolution/fps, computed duration, start timecode, and gamma/color info
 
 `ui_mode` values:
 
@@ -136,7 +137,7 @@ Web dashboard notes:
 
 4. **Interactive Output**: In a TTY, progress is shown as a compact line such as `73.50% | 82.5 MB/112.2 MB | 11.4 MB/s | ETA 00:24`, and the footer shows state such as `IDLE`, `POLLING`, `READY`, `CLEANUP`, or `RETRY`.
 
-5. **Web Dashboard**: A local HTTP server exposes a single-page dashboard and a JSON status endpoint with the current transfer, recent events, session counters, and connection state. Downloaded MP4 clips can be opened directly in an embedded browser player from the dashboard.
+5. **Web Dashboard**: A local HTTP server exposes a single-page dashboard and a JSON status endpoint with the current transfer, session counters, connection state, and an MP4-focused clip list. Downloaded MP4 clips can be opened directly in an embedded browser player from the dashboard, while matching XML sidecars are parsed for metadata instead of being listed separately.
 
 6. **Session Stats**: The live footer and web dashboard track uptime, downloaded file count, downloaded data volume, failures, last poll time, and the last successful download.
 

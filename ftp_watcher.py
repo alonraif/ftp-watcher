@@ -10,10 +10,12 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
+from xml.etree import ElementTree as ET
 
 
 def is_interactive() -> bool:
@@ -249,6 +251,114 @@ def format_timestamp(timestamp: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(timestamp))
 
 
+def format_iso_datetime(value: str) -> str:
+    if not value:
+        return "-"
+    try:
+        return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return value
+
+
+def parse_fps_value(value: str) -> Optional[float]:
+    if not value:
+        return None
+    cleaned = "".join(ch for ch in value if ch.isdigit() or ch == ".")
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def format_clip_duration_from_frames(frame_count: Optional[int], fps: Optional[float]) -> str:
+    if frame_count is None or fps is None or fps <= 0:
+        return "-"
+    seconds = frame_count / fps
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    remainder = seconds - (minutes * 60)
+    return f"{minutes:02d}:{remainder:04.1f}"
+
+
+def normalize_gamma(value: str) -> str:
+    lowered = value.lower()
+    if "hlg" in lowered:
+        return "HLG"
+    return value
+
+
+def normalize_color_metadata(value: str) -> str:
+    lowered = value.lower()
+    if "2020" in lowered:
+        return "rec2020"
+    return value
+
+
+def parse_clip_metadata_from_xml(xml_path: Path) -> Optional[Dict[str, Any]]:
+    namespace = {"nrt": "urn:schemas-professionalDisc:nonRealTimeMeta:ver.2.20"}
+    try:
+        root = ET.fromstring(xml_path.read_text(encoding="utf-8"))
+    except (OSError, ET.ParseError):
+        return None
+
+    def first(path: str) -> Optional[ET.Element]:
+        return root.find(path, namespace)
+
+    def attr(path: str, name: str) -> str:
+        element = first(path)
+        return element.get(name, "").strip() if element is not None else ""
+
+    related = first("./nrt:RelevantFiles/nrt:RelatedTo")
+    related_file = related.get("file", "").strip() if related is not None else ""
+    frame_rate_label = attr("./nrt:VideoFormat/nrt:VideoFrame", "formatFps") or (
+        related.get("formatFps", "").strip() if related is not None else ""
+    )
+    fps_value = parse_fps_value(frame_rate_label) or parse_fps_value(attr("./nrt:VideoFormat/nrt:VideoFrame", "captureFps"))
+
+    duration_frames_text = attr("./nrt:Duration", "value")
+    duration_frames = int(duration_frames_text) if duration_frames_text.isdigit() else None
+    start_tc = ""
+    for change in root.findall("./nrt:LtcChangeTable/nrt:LtcChange", namespace):
+        if change.get("status") == "increment":
+            start_tc = change.get("value", "").strip()
+            break
+
+    gamma = ""
+    color = ""
+    for item in root.findall(".//nrt:Item", namespace):
+        name = item.get("name", "")
+        value = item.get("value", "").strip()
+        if name == "CaptureGammaEquation":
+            gamma = normalize_gamma(value)
+        elif name in {"CaptureColorPrimaries", "CodingEquations"} and not color:
+            color = normalize_color_metadata(value)
+        elif name == "CodingEquations":
+            color = normalize_color_metadata(value)
+
+    manufacturer = attr("./nrt:Device", "manufacturer")
+    model_name = attr("./nrt:Device", "modelName")
+    camera = " ".join(part for part in [manufacturer, model_name] if part).strip()
+
+    return {
+        "mp4_filename": related_file or f"{xml_path.stem}.MP4",
+        "xml_filename": xml_path.name,
+        "camera": camera or "-",
+        "created": format_iso_datetime(attr("./nrt:CreationDate", "value")),
+        "resolution_fps": (
+            f"{attr('./nrt:VideoFormat/nrt:VideoLayout', 'pixel')}x"
+            f"{attr('./nrt:VideoFormat/nrt:VideoLayout', 'numOfVerticalLine')} / {frame_rate_label}"
+            if attr("./nrt:VideoFormat/nrt:VideoLayout", "pixel") and frame_rate_label
+            else "-"
+        ),
+        "duration": format_clip_duration_from_frames(duration_frames, fps_value),
+        "timecode": start_tc or "-",
+        "gamma_color": ", ".join(part for part in [gamma, color] if part) or "-",
+    }
+
+
 @dataclass
 class SessionStats:
     started_at: float
@@ -268,6 +378,7 @@ class DashboardState:
         self.lock = threading.Lock()
         self.started_at = time.time()
         self.config_data = config_data
+        self.clips: Dict[str, Dict[str, Any]] = {}
         self.runtime: Dict[str, Any] = {
             "state": "starting",
             "tone": "info",
@@ -335,12 +446,54 @@ class DashboardState:
             runtime["recent_events"] = list(self.runtime["recent_events"])
             current_download = self.runtime["current_download"]
             runtime["current_download"] = dict(current_download) if current_download else None
+            clips = sorted(
+                (dict(clip) for clip in self.clips.values()),
+                key=lambda clip: clip.get("downloaded_at") or clip.get("updated_at") or 0,
+                reverse=True,
+            )
         return {
             "generated_at": time.time(),
             "started_at": self.started_at,
             "config": dict(self.config_data),
             "runtime": runtime,
+            "clips": clips,
         }
+
+    def _upsert_clip(self, filename: str, **fields: Any) -> None:
+        now = time.time()
+        with self.lock:
+            clip = self.clips.setdefault(
+                filename,
+                {
+                    "filename": filename,
+                    "downloaded": False,
+                    "downloaded_at": None,
+                    "size_bytes": None,
+                    "local_path": None,
+                    "metadata": {},
+                    "updated_at": now,
+                },
+            )
+            clip.update(fields)
+            clip["updated_at"] = now
+
+    def attach_xml_metadata(self, xml_path: Path) -> None:
+        metadata = parse_clip_metadata_from_xml(xml_path)
+        if metadata is None:
+            return
+        mp4_filename = metadata.pop("mp4_filename")
+        self._upsert_clip(mp4_filename, metadata=metadata)
+
+    def mark_clip_downloaded(self, filename: str, size_bytes: int, local_path: Path) -> None:
+        if not filename.lower().endswith(".mp4"):
+            return
+        self._upsert_clip(
+            filename,
+            downloaded=True,
+            downloaded_at=time.time(),
+            size_bytes=size_bytes,
+            local_path=str(local_path),
+        )
 
 
 def build_dashboard_html() -> str:
@@ -503,35 +656,60 @@ def build_dashboard_html() -> str:
       border-radius: inherit;
       transition: width 0.4s ease;
     }
-    .event-list {
+    .clip-list {
       display: grid;
       gap: 10px;
       max-height: 460px;
       overflow: auto;
       padding-right: 4px;
     }
-    .event {
+    .clip-card {
       padding: 14px 16px;
       border-radius: 16px;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
-    .event-head {
+    .clip-head {
       display: flex;
       justify-content: space-between;
       gap: 12px;
       font-size: 0.88rem;
       margin-bottom: 6px;
     }
-    .event-title {
+    .clip-title {
       font-weight: 700;
     }
-    .event-detail {
+    .clip-meta {
       color: var(--muted);
       line-height: 1.45;
       word-break: break-word;
     }
-    .event-action {
+    .clip-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      margin-top: 12px;
+    }
+    .clip-cell {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    .clip-cell .k {
+      display: block;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .clip-cell .v {
+      font-weight: 700;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .clip-action {
       margin-top: 10px;
     }
     .link-button {
@@ -687,8 +865,8 @@ def build_dashboard_html() -> str:
     </section>
 
     <section class="card">
-      <h2>Recent Activity</h2>
-      <div class="event-list" id="event-list"></div>
+      <h2>Recent Clips</h2>
+      <div class="clip-list" id="clip-list"></div>
     </section>
   </div>
 
@@ -764,25 +942,34 @@ def build_dashboard_html() -> str:
       byId("player-frame").src = "about:blank";
     }
 
-    function renderEvents(events) {
-      const host = byId("event-list");
+    function renderClips(clips) {
+      const host = byId("clip-list");
       host.innerHTML = "";
-      if (!events.length) {
-        host.innerHTML = '<div class="event"><div class="event-detail">No activity yet.</div></div>';
+      if (!clips.length) {
+        host.innerHTML = '<div class="clip-card"><div class="clip-meta">No MP4 clips yet.</div></div>';
         return;
       }
-      events.forEach((event) => {
+      clips.forEach((clip) => {
+        const metadata = clip.metadata || {};
         const el = document.createElement("div");
-        el.className = "event";
-        const action = isPlayableMp4(event.filename)
-          ? `<div class="event-action"><button class="link-button" data-file="${event.filename}">Play clip</button></div>`
+        el.className = "clip-card";
+        const action = isPlayableMp4(clip.filename)
+          ? `<div class="clip-action"><button class="link-button" data-file="${clip.filename}">Play clip</button></div>`
           : "";
         el.innerHTML = `
-          <div class="event-head">
-            <span class="event-title">${event.title}</span>
-            <span class="muted">${formatClock(event.time)}</span>
+          <div class="clip-head">
+            <span class="clip-title">${clip.filename}</span>
+            <span class="muted">${clip.downloaded_at ? formatClock(clip.downloaded_at) : "metadata only"}</span>
           </div>
-          <div class="event-detail">${event.detail}</div>
+          <div class="clip-meta">${clip.downloaded ? `${formatBytes(clip.size_bytes)} downloaded` : "Waiting for MP4 download"}${metadata.xml_filename ? ` | XML ${metadata.xml_filename}` : ""}</div>
+          <div class="clip-grid">
+            <div class="clip-cell"><span class="k">Camera</span><span class="v">${metadata.camera || "-"}</span></div>
+            <div class="clip-cell"><span class="k">Created</span><span class="v">${metadata.created || "-"}</span></div>
+            <div class="clip-cell"><span class="k">Resolution / FPS</span><span class="v">${metadata.resolution_fps || "-"}</span></div>
+            <div class="clip-cell"><span class="k">Duration</span><span class="v">${metadata.duration || "-"}</span></div>
+            <div class="clip-cell"><span class="k">Start TC</span><span class="v">${metadata.timecode || "-"}</span></div>
+            <div class="clip-cell"><span class="k">Gamma / Color</span><span class="v">${metadata.gamma_color || "-"}</span></div>
+          </div>
           ${action}
         `;
         const button = el.querySelector("[data-file]");
@@ -841,7 +1028,7 @@ def build_dashboard_html() -> str:
         byId("bar-fill").style.width = "0%";
       }
 
-      renderEvents(runtime.recent_events || []);
+      renderClips(data.clips || []);
     }
 
     byId("close-player").addEventListener("click", closePlayer);
@@ -1426,6 +1613,10 @@ def main() -> int:
                             f"{filename} | {format_bytes(size)} | {format_duration(duration)} | {format_bytes(avg_speed)}/s",
                             filename=filename,
                         )
+                        if filename.lower().endswith(".xml"):
+                            dashboard.attach_xml_metadata(local_path)
+                        elif filename.lower().endswith(".mp4"):
+                            dashboard.mark_clip_downloaded(filename, size, local_path)
 
                         if delete_after_download:
                             dashboard.update_runtime(
