@@ -546,7 +546,7 @@ def build_dashboard_html() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FTP Sync Dashboard</title>
+  <title>RXS viewer</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f4eee5'/%3E%3Cpath d='M12 22a6 6 0 0 1 6-6h13l4 5h11a6 6 0 0 1 6 6v15a6 6 0 0 1-6 6H18a6 6 0 0 1-6-6V22Z' fill='%232b7c99'/%3E%3Crect x='16' y='28' width='32' height='8' rx='4' fill='%23ffffff' opacity='.95'/%3E%3Ccircle cx='24' cy='32' r='2.3' fill='%231e9a75'/%3E%3Ccircle cx='32' cy='32' r='2.3' fill='%231e9a75'/%3E%3Ccircle cx='40' cy='32' r='2.3' fill='%231e9a75'/%3E%3C/svg%3E">
   <style>
     :root {
@@ -880,7 +880,7 @@ def build_dashboard_html() -> str:
         <div class="hero-brand">
           <img class="hero-logo" src="https://cdn-liveutv.pressidium.com/wp-content/uploads/2024/01/Live-and-Ulimted-Light-Background-V2.png" alt="LiveU logo">
           <div>
-            <h1>FTP Sync</h1>
+            <h1>RXS viewer</h1>
           </div>
         </div>
         <div class="hero-side">
@@ -898,10 +898,7 @@ def build_dashboard_html() -> str:
       <div class="stats-grid">
         <div class="mini"><div class="label">Files Downloaded</div><div class="value" id="files-downloaded">0</div></div>
         <div class="mini"><div class="label">Data Downloaded</div><div class="value" id="bytes-downloaded">0 B</div></div>
-        <div class="mini"><div class="label">Failures</div><div class="value" id="failures">0</div></div>
-        <div class="mini"><div class="label">Skipped</div><div class="value" id="skipped">0</div></div>
         <div class="mini"><div class="label">Uptime</div><div class="value" id="uptime">00:00</div></div>
-        <div class="mini"><div class="label">Idle For</div><div class="value" id="idle-for">-</div></div>
       </div>
     </section>
 
@@ -917,7 +914,6 @@ def build_dashboard_html() -> str:
         <div class="pill-row">
           <div class="pill"><strong>Last Success:</strong> <span id="last-success">-</span></div>
           <div class="pill"><strong>Last File:</strong> <span id="last-file">-</span></div>
-          <div class="pill"><strong>Last Error:</strong> <span id="last-error">-</span></div>
         </div>
       </div>
     </section>
@@ -956,6 +952,16 @@ def build_dashboard_html() -> str:
     function formatClock(ts) {
       if (!ts) return "-";
       return new Date(ts * 1000).toLocaleTimeString();
+    }
+
+    function formatClipAddedAt(ts) {
+      if (!ts) return "-";
+      const date = new Date(ts * 1000);
+      const ageSeconds = (Date.now() / 1000) - ts;
+      if (ageSeconds > 24 * 60 * 60) {
+        return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+      }
+      return date.toLocaleTimeString();
     }
 
     function formatDuration(seconds) {
@@ -1020,7 +1026,7 @@ def build_dashboard_html() -> str:
         el.innerHTML = `
           <div class="clip-head">
             <span class="clip-title">${clip.filename}</span>
-            <span class="muted">${clip.downloaded_at ? formatClock(clip.downloaded_at) : "metadata only"}</span>
+            <span class="muted">${clip.downloaded_at ? formatClipAddedAt(clip.downloaded_at) : "metadata only"}</span>
           </div>
           <div class="clip-meta">${clip.downloaded ? `${formatBytes(clip.size_bytes)} downloaded` : "Waiting for MP4 download"}${metadata.xml_filename ? ` | XML ${metadata.xml_filename}` : ""}</div>
           <div class="clip-grid">
@@ -1053,10 +1059,7 @@ def build_dashboard_html() -> str:
       setText("next-poll-inline", `Next poll: ${runtime.next_check_at ? formatDuration(runtime.next_check_at - now) : "-"}`);
       setText("files-downloaded", runtime.files_downloaded);
       setText("bytes-downloaded", formatBytes(runtime.bytes_downloaded));
-      setText("failures", runtime.failures);
-      setText("skipped", runtime.skipped);
       setText("uptime", formatDuration(now - data.started_at));
-      setText("idle-for", runtime.idle_since ? formatDuration(now - runtime.idle_since) : "-");
       setText("last-success", formatClock(runtime.last_success_at));
       const lastFile = runtime.last_download_name || "-";
       const lastFileEl = byId("last-file");
@@ -1064,7 +1067,6 @@ def build_dashboard_html() -> str:
       lastFileEl.style.cursor = isPlayableMp4(runtime.last_download_name) ? "pointer" : "default";
       lastFileEl.style.textDecoration = isPlayableMp4(runtime.last_download_name) ? "underline" : "none";
       lastFileEl.onclick = isPlayableMp4(runtime.last_download_name) ? () => openPlayer(runtime.last_download_name) : null;
-      setText("last-error", runtime.last_error || "-");
 
       const current = runtime.current_download;
       if (current) {
